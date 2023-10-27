@@ -1,3 +1,4 @@
+import { vec3 } from "../gl-matrix/index.js";
 export const TracerVertexSource: string = `
     attribute vec3 vertex;
     uniform vec3 ray00, ray01, ray10, ray11;
@@ -9,7 +10,13 @@ export const TracerVertexSource: string = `
     }
 `
 
+function colorToGLSLString(color: vec3): string {
+    return `vec3(${color[0] / 255}, ${color[1] / 255}, ${color[2] / 255})`
+}
+
 export const TracerFragmentSource = (width: number, height: number): string => {
+    let lavender = vec3.fromValues(226, 209, 249);
+    let teil = vec3.fromValues(49, 119, 115);
     return `precision highp float;
             uniform vec3 eye;
             varying vec3 initialRay;
@@ -28,7 +35,62 @@ export const TracerFragmentSource = (width: number, height: number): string => {
             vec3 roomCubeMax = vec3(1.0);
 
             uniform sampler2D ceilingTexture;
-            
+
+            uniform float triangleVertices[36];
+
+            vec3 getTriangleNormal(vec3 v1, vec3 v2, vec3 v3) {
+                vec3 v1v2 = v2 - v1;
+                vec3 v1v3 = v3 - v2;
+                vec3 N = normalize(cross(v1v2, v1v3));
+                return N;
+            }
+
+            vec4 intersectTriangle(vec3 origin, vec3 ray, vec3 v1, vec3 v2, vec3 v3) {
+                vec3 normal = getTriangleNormal(v1, v2, v3);
+
+                // check if ray and triangle are parallel
+                float normalDotRay = dot(normal, ray);
+                if (abs(normalDotRay) < 0.001) return vec4(10000.0, 0.0, 0.0, 0.0);
+
+                float distanceToOrigin = dot(-normal, v1);
+                float t = -(dot(origin, normal) + distanceToOrigin) / dot(normal, ray);
+
+                // triangle is behind ray if t is negative
+                if (t < 0.001) return vec4(10000.0, 0.0, 0.0, 0.0); //TODO: understand behavior of shader when condition is set to t < -0.001
+
+                // compute intersection point
+                vec3 hit = origin + t * ray;
+
+                // test whether intersection point is within triangle
+                float tolerance = 0.00001;
+                vec3 v1v2 = v2 - v1;
+                vec3 v1hit= hit - v1;
+                if (dot(cross(v1v2, v1hit), normal) < tolerance) return vec4(10000.0, 0.0, 0.0, 0.0);
+
+                vec3 v2v3 = v3 - v2;
+                vec3 v2hit= hit - v2;
+                if (dot(cross(v2v3, v2hit), normal) < tolerance) return vec4(10000.0, 0.0, 0.0, 0.0);
+
+                vec3 v3v1 = v1 - v3;
+                vec3 v3hit= hit - v3;
+                if (dot(cross(v3v1, v3hit), normal) < tolerance) return vec4(10000.0, 0.0, 0.0, 0.0);
+
+                return vec4(t, normal.x, normal.y, normal.z);
+            }
+
+            vec4 intersectTriangles(vec3 origin, vec3 ray) {
+                vec4 t = vec4(10000.0, 0.0, 0.0, 0.0);
+                for (int i = 0; i < 4; i++) {
+                    vec3 v1 = vec3(triangleVertices[i * 9], triangleVertices[i * 9 + 1], triangleVertices[i * 9 + 2]);
+                    vec3 v2 = vec3(triangleVertices[i * 9 + 3], triangleVertices[i * 9 + 4], triangleVertices[i * 9 + 5]);
+                    vec3 v3 = vec3(triangleVertices[i * 9 + 6], triangleVertices[i * 9 + 7], triangleVertices[i * 9 + 8]);
+
+                    vec4 currT = intersectTriangle(origin, ray, v1, v2, v3);
+                    if (currT.x < t.x) t = currT;
+                }
+                return t;
+            }
+
             float intersectSphere(vec3 origin, vec3 ray, vec3 sphereCenter, float sphereRadius) {
                 vec3 toSphere = origin - sphereCenter;
                 float a = dot(ray, ray);
@@ -125,11 +187,16 @@ export const TracerFragmentSource = (width: number, height: number): string => {
                     float tSphere1 = intersectSphere(origin, ray, sphere1Center, sphere1Radius);
                     float tSphere2 = intersectSphere(origin, ray, sphere2Center, sphere2Radius);
 
+                    vec4 tTriangles = intersectTriangles(origin, ray);
+
                     if (tSphere1 < t) {
                         t = tSphere1;
                     }
                     if (tSphere2 < t) {
                         t = tSphere2;
+                    }
+                    if (tTriangles.x < t) {
+                        t = tTriangles.x;
                     }
                     
                     vec3 hit = origin + ray * t;
@@ -144,13 +211,19 @@ export const TracerFragmentSource = (width: number, height: number): string => {
                     } else if (t == tRoom.y) {
                         normal = -normalForCube(hit, roomCubeMin, roomCubeMax);
                         if (hit.x < -0.9999) {
-                            surfaceColor = vec3(0.1, 0.5, 1.0);
+                            surfaceColor = ${colorToGLSLString(teil)};
                         } else if (hit.x > 0.9999) {
-                            surfaceColor = vec3(1.0, 0.9, 0.1);
+                            surfaceColor = ${colorToGLSLString(lavender)};
                         } else if (hit.y > 0.9999) {
                             surfaceColor = texture2D(ceilingTexture, (hit.xz + 1.0) / 2.0).rgb;
                         }
                         ray = cosineWeightedDirection(timeSinceStart + float(bounce), normal);
+                    } else if (t == tTriangles.x) {
+                        normal = tTriangles.yzw;
+                        ray = reflect(ray, normal);
+                        vec3 reflectedLight = normalize(reflect(toLight, normal));
+                        float specularHighlight = max(0.0, dot(reflectedLight, normalize(hit - origin)));
+                        specularHighlight = 2.0 * pow(specularHighlight, 20.0);
                     } else {
                         if (t == tSphere1) {
                             sphereCenter = sphere1Center;
@@ -171,7 +244,8 @@ export const TracerFragmentSource = (width: number, height: number): string => {
 
                     float shadowIntensity = 1.0;
                     if (intersectSphere(hit + normal * 0.0001, toLight, sphere1Center, sphere1Radius) < 1.0 ||
-                        intersectSphere(hit + normal * 0.0001, toLight, sphere2Center, sphere2Radius) < 1.0) {
+                        intersectSphere(hit + normal * 0.0001, toLight, sphere2Center, sphere2Radius) < 1.0 ||
+                        intersectTriangles(hit + normal * 0.0001, toLight).x < 1.0) {
                             shadowIntensity = 0.0;
                     }
 

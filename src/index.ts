@@ -13,8 +13,8 @@ let angleY: number = 0;
 
 let light: vec3 = vec3.fromValues(0.4, 0.5, -0.6);
 let sphere1 = {
-    sphereCenter: vec3.fromValues(0, 0.25, 0),
-    sphereRadius: 0.25
+    sphereCenter: vec3.fromValues(0.25, 0.25, 0),
+    sphereRadius: 0.1
 }
 
 let sphere2 = {
@@ -92,6 +92,7 @@ function main() {
         return;
     }
     gl = glMaybeNull;
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
     let width: number = canvas.clientWidth;
     let height: number = canvas.clientHeight;
@@ -131,7 +132,7 @@ function main() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE,
         new Uint8Array([0, 0, 255, 255]));
     let image = new Image();
-    image.src = "../assets/taki.png";
+    image.src = "../assets/checkerboard.png";
     image.addEventListener('load', () => {
         console.log("image loaded");
         gl.bindTexture(gl.TEXTURE_2D, ceilingTexture);
@@ -142,6 +143,17 @@ function main() {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
         gl.bindTexture(gl.TEXTURE_2D, null);
     });
+
+    let triangleVertex1 = [-1 / 4, 0, -1 / (4 * Math.sqrt(3))];
+    let triangleVertex2 = [1 / 4, 0, -1 / (4 * Math.sqrt(3))];
+    let triangleVertex3 = [0, 0, 1 / (2 * Math.sqrt(3))];
+    let triangleVertex4 = [0, 1 / Math.sqrt(6), 0];
+    let triangleVertices: Float32Array = new Float32Array(([] as number[]).concat(
+        triangleVertex3, triangleVertex2, triangleVertex1,
+        triangleVertex1, triangleVertex2, triangleVertex4,
+        triangleVertex1, triangleVertex4, triangleVertex3,
+        triangleVertex2, triangleVertex3, triangleVertex4
+    ));
 
     // create render shader
     let renderProgram = initShaderProgram(gl, RenderVertexSource, RenderFragmentSource);
@@ -181,7 +193,8 @@ function main() {
                 sphere1Center: gl.getUniformLocation(tracerProgram, 'sphere1Center'),
                 sphere1Radius: gl.getUniformLocation(tracerProgram, 'sphere1Radius'),
                 sphere2Center: gl.getUniformLocation(tracerProgram, 'sphere2Center'),
-                sphere2Radius: gl.getUniformLocation(tracerProgram, 'sphere2Radius')
+                sphere2Radius: gl.getUniformLocation(tracerProgram, 'sphere2Radius'),
+                triangleVertices: gl.getUniformLocation(tracerProgram, 'triangleVertices')
             }
         },
         renderProgram: {
@@ -203,6 +216,8 @@ function main() {
 
     gl.uniform1i(programInfo.tracerProgram.uniformLocations.texture, 0);
     gl.uniform1i(programInfo.tracerProgram.uniformLocations.ceilingTexture, 1);
+
+    gl.uniform1fv(programInfo.tracerProgram.uniformLocations.triangleVertices, triangleVertices);
 
     registerControls(canvas, eye);
 
